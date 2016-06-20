@@ -12,7 +12,6 @@ Options:
   -t                        Launch Torrent.
 
 """
-import sys
 import requests
 import subprocess
 
@@ -23,47 +22,94 @@ from tabulate import tabulate
 from operator import itemgetter
 from bs4 import BeautifulSoup as bs4
 
-def main(arguments):
-    search = arguments.get('<search>')
-    category = arguments.get('-c')
 
-    if category:
-        search = '{search} category:{category}'.format(search=search, category=category)
+class KAT(object):
+    def __init__(self, search, category=None, do_open_torrent=False):
+        self._search = search
+        self._category = category
+        self._do_open_torrent = do_open_torrent
+        self._url = 'https://kat.cr/usearch/{search}/?rss=1'
+        self._user_agent = 'Mozilla/5.0 KAT-cli/0.1'
+        self._session = requests.Session()
 
-    print('Search : {search}'.format(search=search))
+    def _prep_search(self):
+        if self._category:
+            self._search = '{search} category:{category}'.format(
+                            search=self._search, category=self._category)
 
-    r = requests.get('https://kat.cr/usearch/{search}/?rss=1'.format(search=search))
-    h = bs4(r.text, "lxml")
+        return self._search
 
-    ts = h.find_all('item')
+    def _find_items(self):
+        print('Search : {search}'.format(search=self._search))
 
-    tt = [[t.find('title').text[:70], human(parser.parse(t.find('pubdate').text, ignoretz=True)), int(t.find('torrent:seeds').text), t.find('torrent:filename').text, t.find('enclosure').get('url')] for t in ts]
+        req = self._session.get(self._url.format(search=self._search))
+        html = bs4(req.text, 'lxml')
 
-    stt = sorted(tt, key=itemgetter(2), reverse=True)
+        items = html.find_all('item')
 
-    [x.insert(0, i) for (i,x) in enumerate(stt, start=1)]
+        return items
 
-    stt.insert(0, ['ID', 'Title', 'Pubdate', 'Seeders', 'Filename', 'URL'])
+    def _parse_sort_items(self, items):
+        item_table = [[
+            item.find('title').text[:70],
+            human(parser.parse(item.find('pubdate').text, ignoretz=True)),
+            int(item.find('torrent:seeds').text),
+            item.find('torrent:filename').text,
+            item.find('enclosure').get('url')
+            ] for item in items]
 
-    print(tabulate([[i,t,p,s] for (i,t,p,s,_,_) in stt]))
+        sorted_item_table = sorted(item_table, key=itemgetter(2), reverse=True)
+        [item.insert(0, i) for (i, item) in
+            enumerate(sorted_item_table, start=1)]
+        sorted_item_table.insert(
+            0, ['ID', 'Title', 'Pubdate', 'Seeders', 'Filename', 'URL'])
 
-    sid = int(input('ID : '))
+        return sorted_item_table
 
-    filename = stt[sid][4]
-    url = stt[sid][5]
+    def _print_items(self, items):
+        print(tabulate([[i, t, p, s] for (i, t, p, s, _, _) in items]))
 
-    print('Downloading {filename} from {url}'.format(filename=filename, url=url))
+    def _ask_input(self, items):
+        sid = 0
+        while not (int(sid) > 0 and int(sid) < len(items)):
+            sid = int(input('ID : '))
 
-    headers = {'user-agent': 'Mozilla/5.0 KAT-cli/0.1'}
-    r = requests.get(url, headers=headers, stream=True)
+        filename = items[sid][4]
+        url = items[sid][5]
 
-    with open(filename, 'wb') as fd:
-        for chunk in r.iter_content(1024):
-            fd.write(chunk)
+        return (filename, url)
 
-    if arguments.get('-t'):
+    def _download(self, filename, url):
+        print('Downloading {filename} from {url}'.format(
+            filename=filename, url=url))
+
+        headers = {'user-agent': self._user_agent}
+        r = self._session.get(url, headers=headers, stream=True)
+
+        with open(filename, 'wb') as fd:
+            for chunk in r.iter_content(1024):
+                fd.write(chunk)
+
+    def _open_torrent(self, filename):
         subprocess.run(['open', filename])
+
+    def main(self):
+        self._prep_search()
+        items = self._find_items()
+        sorted_item_table = self._parse_sort_items(items)
+        self._print_items(sorted_item_table)
+        filename, url = self._ask_input(sorted_item_table)
+        self._download(filename, url)
+        if self._do_open_torrent:
+            self._open_torrent(filename)
+
 
 if __name__ == '__main__':
     arguments = docopt(__doc__, version='KAT-cli 0.1')
-    main(arguments)
+
+    search = arguments.get('<search>')
+    category = arguments.get('-c')
+    do_open_torrent = arguments.get('-t')
+
+    kat = KAT(search, category, do_open_torrent)
+    kat.main()
