@@ -12,6 +12,7 @@ Options:
   -t                        Launch Torrent.
 
 """
+import sys
 import requests
 import subprocess
 
@@ -72,7 +73,10 @@ class KAT(object):
     def _ask_input(self, items):
         sid = 0
         while not (int(sid) > 0 and int(sid) < len(items)):
-            sid = int(input('ID : '))
+            sid = input('ID (or quit) : ')
+            if sid == 'quit' or sid == 'q':
+                sys.exit(0)
+            sid = int(sid)
 
         filename = items[sid][4]
         url = items[sid][5]
